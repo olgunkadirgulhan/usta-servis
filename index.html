@@ -114,6 +114,8 @@ tr.low td{background:var(--amber-soft)}
 /* modal */
 .ov{position:fixed;inset:0;background:rgba(8,14,18,.5);display:flex;align-items:flex-start;justify-content:center;padding:max(5vh,16px) 16px;overflow-y:auto;z-index:50}
 .md{background:var(--surface);border-radius:12px;width:min(560px,100%);padding:20px;box-shadow:0 20px 50px rgba(0,0,0,.3)}
+.md.wide{width:min(860px,100%)}
+.fsec{grid-column:1/-1;font-family:var(--f-display);font-size:15px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--brand);border-bottom:1px solid var(--line);padding-bottom:4px;margin-top:6px}
 .md h3{font-family:var(--f-display);font-size:24px;text-transform:uppercase;margin:0 0 14px;letter-spacing:.02em}
 .fg{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .f{display:flex;flex-direction:column;gap:4px;grid-column:span 2;min-width:0}
@@ -185,7 +187,7 @@ function waNumber(p){let d=digits(p);if(d.startsWith("90"))return d;if(d.startsW
 const COLS=["customers","vehicles","orders","stock","movements","appts","cash","settings"];
 const S={};COLS.forEach(c=>S[c]=[]);
 let db=null, MODE="local", readOnly=false, loaded=false;
-const LS="usta-servis-v1";
+const LS="usta-servis-v2";
 function loadLocal(){try{const j=JSON.parse(localStorage.getItem(LS)||"null");if(j)COLS.forEach(c=>S[c]=j[c]||[])}catch(e){}}
 function saveLocal(){try{localStorage.setItem(LS,JSON.stringify(S))}catch(e){}}
 function writeErr(e){
@@ -221,10 +223,18 @@ function lastService(vid){return S.orders.filter(o=>o.vehicleId===vid&&o.status=
 function nextNo(){let m=0;S.orders.forEach(o=>{const n=parseInt(digits(o.no),10);if(n>m)m=n});return "İE"+String(m+1).padStart(6,"0")}
 function nextInvoice(){const y=new Date().getFullYear();let m=0;S.orders.forEach(o=>{if(o.invoiceNo&&String(o.invoiceNo).startsWith(String(y))){const n=+String(o.invoiceNo).slice(4);if(n>m)m=n}});return y+String(m+1).padStart(5,"0")}
 function serviceDue(v){
-  const ls=lastService(v.id);if(!ls)return null;
-  const dueDate=addDays(ls.closedAt,365), dueKm=(+ls.km||0)+15000;
-  return{ls,dueDate,dueKm,days:daysBetween(today(),dueDate),kmLeft:dueKm-(+v.km||0)};
+  const ls=lastService(v.id);
+  const lastDate=v.lastService&&(!ls||v.lastService>ls.closedAt)?v.lastService:(ls?ls.closedAt:v.lastService||null);
+  const lastKm=ls?+ls.km||0:null;
+  const dueDate=v.nextService||(lastDate?addDays(lastDate,365):null);
+  const dueKm=+v.nextKm||(lastKm!=null?lastKm+15000:null);
+  if(!dueDate&&!dueKm)return null;
+  return{ls,lastDate,lastKm,dueDate,dueKm,days:dueDate?daysBetween(today(),dueDate):99999,kmLeft:dueKm?dueKm-(+v.km||0):999999};
 }
+const DOCS=[["inspEnd","Fenni muayene"],["exhEnd","Egzoz muayenesi"],["trafficEnd","Trafik sigortası"],["kaskoEnd","Kasko"],["warrantyEnd","Garanti"]];
+function docAlerts(v){const t=today();return DOCS.filter(([k])=>v[k]).map(([k,l])=>({k,l,date:v[k],days:daysBetween(t,v[k])})).filter(x=>x.days<=30&&x.days>=-60)}
+const smsOk=v=>v.smsOk!==false;
+const dayTxt=d=>d<0?`<span style="color:var(--bad)">${-d} gün geçti</span>`:d===0?"<b>bugün</b>":d+" gün kaldı";
 
 /* ---------- arayüz durumu ---------- */
 let view="panel", param=null, filter="aktif", q="", portal={plate:"",last4:"",vid:null,oid:null,err:""};
@@ -239,6 +249,7 @@ const ICONS={
  appts:'<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/>',
  kasa:'<rect x="2.5" y="6" width="19" height="13" rx="2"/><circle cx="12" cy="12.5" r="2.8"/><path d="M6 9.5v6M18 9.5v6"/>',
  remind:'<path d="M6 8a6 6 0 1 1 12 0c0 7 3 8 3 8H3s3-1 3-8M10 20a2 2 0 0 0 4 0"/>',
+ vehicles:'<path d="M3 16v-4l2-5a2 2 0 0 1 1.9-1.4h10.2A2 2 0 0 1 19 7l2 5v4zM3 12h18"/><circle cx="7.5" cy="16.5" r="1.8"/><circle cx="16.5" cy="16.5" r="1.8"/>',
  portal:'<rect x="6" y="2.5" width="12" height="19" rx="2.5"/><path d="M11 18.5h2"/>',
  settings:'<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1V21a2 2 0 0 1-4 0v-.1a1.6 1.6 0 0 0-2.7-1.1l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.6 1.6 0 0 0 3.6 15 1.6 1.6 0 0 0 2 14H2a2 2 0 0 1 0-4h.1a1.6 1.6 0 0 0 1.5-1 1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H8a1.6 1.6 0 0 0 1-1.5V3a2 2 0 0 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 0 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/>'
 };
@@ -250,7 +261,8 @@ function reminders(){
   const ready=S.orders.filter(o=>o.status==="Hazır");
   const due=S.vehicles.map(v=>({v,d:serviceDue(v)})).filter(x=>x.d&&(x.d.days<=30||x.d.kmLeft<=1000)).sort((a,b)=>a.d.days-b.d.days);
   const debt=S.customers.map(c=>({c,b:balance(c.id)})).filter(x=>x.b>0).sort((a,b)=>b.b-a.b);
-  return{appts,ready,due,debt,count:appts.length+ready.length+due.length+debt.length};
+  const docs=[];S.vehicles.forEach(v=>docAlerts(v).forEach(a=>docs.push({v,...a})));docs.sort((a,b)=>a.days-b.days);
+  return{appts,ready,due,debt,docs,count:appts.length+ready.length+due.length+debt.length+docs.length};
 }
 
 /* ---------- çizim ---------- */
@@ -263,7 +275,7 @@ function renderSide(){
   const r=reminders().count;
   const item=(k,l,c,warn)=>`<button class="nav${view===k||(k==="orders"&&view==="order")||(k==="customers"&&view==="customer")?" on":""}" data-act="nav" data-id="${k}">${icon(k)}<span>${l}</span>${c?`<span class="cnt${warn?" warn":""}">${c}</span>`:""}</button>`;
   $("#side").innerHTML=`<div class="logo">Usta<span>Servis</span></div><div class="firm">${esc(settings().name)}</div>
-  ${item("panel","Panel")}${item("orders","İş Emirleri",open)}${item("customers","Cari Kartlar")}${item("stock","Stok",low,low>0)}
+  ${item("panel","Panel")}${item("orders","İş Emirleri",open)}${item("customers","Cari Kartlar")}${item("vehicles","Araçlar",S.vehicles.filter(v=>docAlerts(v).length).length,true)}${item("stock","Stok",low,low>0)}
   ${item("appts","Randevu",ta)}${item("kasa","Kasa")}${item("remind","Hatırlatmalar",r,r>0)}<div class="sep"></div>
   ${item("portal","Müşteri Portalı")}${item("settings","Ayarlar")}
   <div class="foot">${MODE==="db"?"Veriler bulutta, tüm cihazlarda ortak.":"Veriler bu tarayıcıda tutuluyor."}</div>`;
@@ -274,7 +286,7 @@ function demoBar(){
 }
 function render(){
   renderSide();
-  const V={panel:vPanel,orders:vOrders,order:vOrder,customers:vCustomers,customer:vCustomer,stock:vStock,appts:vAppts,kasa:vKasa,remind:vRemind,portal:vPortal,settings:vSettings}[view]||vPanel;
+  const V={panel:vPanel,vehicles:vVehicles,orders:vOrders,order:vOrder,customers:vCustomers,customer:vCustomer,stock:vStock,appts:vAppts,kasa:vKasa,remind:vRemind,portal:vPortal,settings:vSettings}[view]||vPanel;
   $("#main").innerHTML=(view!=="portal"?demoBar():"")+V();
   const s=$("#q");if(s&&document.activeElement!==s&&s.dataset.focus){s.focus();s.setSelectionRange(s.value.length,s.value.length)}
 }
@@ -311,8 +323,9 @@ function vPanel(){
       ${r.ready.length?`<div class="li"><span class="pill st-hazir">${r.ready.length}</span><div class="grow">araç hazır, müşteriye haber verilecek</div><button class="btn sm" data-act="nav" data-id="remind">Mesajlar</button></div>`:""}
       ${r.appts.length?`<div class="li"><span class="pill st-acik">${r.appts.length}</span><div class="grow">yarınki randevu için hatırlatma</div><button class="btn sm" data-act="nav" data-id="remind">Mesajlar</button></div>`:""}
       ${r.due.length?`<div class="li"><span class="pill st-parca">${r.due.length}</span><div class="grow">aracın periyodik bakımı geldi</div><button class="btn sm" data-act="nav" data-id="remind">Mesajlar</button></div>`:""}
+      ${r.docs.length?`<div class="li"><span class="pill st-parca">${r.docs.length}</span><div class="grow">muayene, sigorta, kasko veya garanti bitiyor</div><button class="btn sm" data-act="nav" data-id="remind">Mesajlar</button></div>`:""}
       ${low.length?`<div class="li"><span class="pill st-bad">${low.length}</span><div class="grow">${low.slice(0,3).map(s=>esc(s.name)).join(", ")}${low.length>3?"…":""} sipariş edilmeli</div><button class="btn sm" data-act="nav" data-id="stock">Stok</button></div>`:""}
-      ${!r.ready.length&&!r.appts.length&&!r.due.length&&!low.length?`<div class="empty">Bekleyen iş yok.</div>`:""}
+      ${!r.ready.length&&!r.appts.length&&!r.due.length&&!r.docs.length&&!low.length?`<div class="empty">Bekleyen iş yok.</div>`:""}
     </div></div>
    </div>
   </div>`;
@@ -340,7 +353,7 @@ function vOrder(){
   `<div class="steps" style="margin-bottom:14px">${STATUSES.map((s,i)=>`<button class="${i<si?"done":i===si?"cur":""}" ${i===3||closed||readOnly?"disabled":""} data-act="setStatus" data-id="${o.id}" data-st="${s}">${i<si?"✓ ":""}${s}</button>`).join("")}</div>
   <div class="grid g2" style="margin-bottom:14px">
    <div class="panel"><h2>Müşteri</h2><dl class="kv"><dt>Cari</dt><dd><a href="#" data-act="openCustomer" data-id="${c.id}" style="color:var(--brand)">${esc(c.name)}</a></dd><dt>Telefon</dt><dd>${esc(c.phone)}</dd><dt>Cari bakiye</dt><dd>${TL(balance(c.id))}</dd></dl></div>
-   <div class="panel"><h2>Araç</h2><dl class="kv"><dt>Giriş km</dt><dd>${num(o.km)}</dd><dt>Şikayet</dt><dd>${esc(o.complaint||"—")}</dd>${closed?`<dt>Fatura</dt><dd class="mono">${esc(o.invoiceNo)} · ${fdate(o.closedAt)}</dd>`:""}</dl></div>
+   <div class="panel"><div class="head" style="margin-bottom:6px"><h2 style="margin:0">Araç</h2>${o.vehicleId&&byId("vehicles",o.vehicleId)?`<button class="btn sm" data-act="vehicleCard" data-id="${o.vehicleId}">Araç kartı</button>`:""}</div><dl class="kv"><dt>Giriş km</dt><dd>${num(o.km)}</dd><dt>Şikayet</dt><dd>${esc(o.complaint||"—")}</dd>${closed?`<dt>Fatura</dt><dd class="mono">${esc(o.invoiceNo)} · ${fdate(o.closedAt)}</dd>`:""}</dl></div>
   </div>
   <div class="panel"><div class="head" style="margin-bottom:10px"><h2 style="margin:0">Yedek parça ve işçilik</h2>${!closed?`<div class="btns"><button class="btn sm pri" data-act="addLine" data-id="${o.id}"${W()}>+ Parça / işçilik ekle</button><button class="btn sm" data-act="addPackage" data-id="${o.id}"${W()}>+ Periyodik bakım paketi</button></div>`:""}</div>
   ${tbl([{l:"Ürün / işçilik"},{l:"Tür"},{l:"Miktar",n:1},{l:"Birim fiyat",n:1},{l:"KDV",n:1},{l:"Tutar",n:1},{l:""}],
@@ -366,7 +379,7 @@ function vCustomer(){
   return `<div style="margin-bottom:10px"><button class="btn sm" data-act="nav" data-id="customers">← Cari kartlar</button></div>`+
   head(esc(c.name),`${esc(c.type||"Bireysel")} · ${esc(c.phone)}${c.taxNo?" · VKN "+esc(c.taxNo):""}`,`<button class="btn" data-act="editCustomer" data-id="${c.id}"${W()}>Düzenle</button><button class="btn" data-act="customerMsg" data-id="${c.id}">Hesap özeti gönder</button><button class="btn pri" data-act="collect" data-id="${c.id}"${W()}>Tahsilat al</button>`)+
   `<div class="kpis"><div class="kpi${b>0?" warn":""}"><div class="l">Bakiye</div><div class="v">${TL(b)}</div><div class="h">${b>0?"müşterinin borcu":b<0?"müşterinin alacağı":"hesap kapalı"}</div></div><div class="kpi"><div class="l">Araç</div><div class="v">${vs.length}</div></div><div class="kpi"><div class="l">Toplam servis</div><div class="v">${S.orders.filter(o=>o.customerId===c.id).length}</div></div></div>
-  <div class="grid g2"><div class="panel"><h2>Araçları</h2>${vs.length?`<div class="list">${vs.map(v=>{const d=serviceDue(v);return `<div class="li">${plateHTML(v.plate)}<div class="grow"><b>${esc(v.brand)} ${esc(v.model)}</b> ${esc(v.year||"")}<div class="muted">${num(v.km)} km${d?` · sonraki bakım ${fdate(d.dueDate)} veya ${num(d.dueKm)} km`:""}</div></div><button class="btn sm" data-act="newOrderFor" data-id="${v.id}"${W()}>İş emri aç</button></div>`}).join("")}</div>`:`<div class="empty">Kayıtlı araç yok.</div>`}</div>
+  <div class="grid g2"><div class="panel"><h2>Araçları</h2>${vs.length?`<div class="list">${vs.map(v=>{const d=serviceDue(v);return `<div class="li">${plateHTML(v.plate)}<div class="grow"><b>${esc(v.brand)} ${esc(v.model)}</b> ${esc(v.year||"")}<div class="muted">${num(v.km)} km${d?` · sonraki bakım ${[d.dueDate&&fdate(d.dueDate),d.dueKm&&num(d.dueKm)+" km"].filter(Boolean).join(" veya ")}`:""}</div></div><button class="btn sm" data-act="vehicleCard" data-id="${v.id}">Araç kartı</button><button class="btn sm" data-act="newOrderFor" data-id="${v.id}"${W()}>İş emri aç</button></div>`}).join("")}</div>`:`<div class="empty">Kayıtlı araç yok.</div>`}</div>
   <div class="panel"><h2>Servis geçmişi</h2>${(()=>{const os=S.orders.filter(o=>o.customerId===c.id).sort((a,b)=>(b.openedAt||"").localeCompare(a.openedAt||""));return os.length?`<div class="list">${os.map(o=>`<div class="li" style="cursor:pointer" data-act="openOrder" data-id="${o.id}">${plateHTML(o.plate)}<div class="grow">${fdate(o.openedAt)} · ${esc(o.complaint||"Servis")}</div><span>${TL(totals(o).total)}</span>${pill(o.status)}</div>`).join("")}</div>`:`<div class="empty">Servis kaydı yok.</div>`})()}</div></div>
   <div style="margin-top:14px"><h2>Hesap hareketleri</h2>${tbl([{l:"Tarih"},{l:"Açıklama"},{l:"Borç",n:1},{l:"Alacak",n:1},{l:"Bakiye",n:1}],mrows,"Hesap hareketi yok.")}</div>`;
 }
@@ -380,6 +393,67 @@ function vStock(){
   tbl([{l:"Ürün"},{l:"Marka"},{l:"Kod"},{l:"Giren",n:1},{l:"Çıkan",n:1},{l:"Mevcut",n:1},{l:"Alış",n:1},{l:"Satış",n:1},{l:""}],
    rows.map(s=>`<tr class="${isLow(s)?"low":""}"><td><b>${esc(s.name)}</b>${isLow(s)?` <span class="pill st-parca">min ${num(s.min)}</span>`:""}</td><td>${esc(s.brand)}</td><td class="mono">${esc(s.code)}</td><td class="n">${num(s.in)}</td><td class="n">${num(s.out)}</td><td class="n"><b>${num(stockQty(s))}</b> ${esc(s.unit||"Adet")}</td><td class="n">${TL(s.buy)}</td><td class="n">${TL(s.sell)}</td><td class="n" style="white-space:nowrap"><button class="btn sm" data-act="stockIn" data-id="${s.id}"${W()}>Giriş</button> <button class="btn sm" data-act="editStock" data-id="${s.id}"${W()}>Düzenle</button></td></tr>`),
    filter==="kritik"?"Kritik seviyede ürün yok.":"Stok kartı yok.");
+}
+
+function vVehicles(){
+  const qq=q.toLocaleLowerCase("tr-TR");
+  const rows=S.vehicles.filter(v=>{if(filter==="uyari"&&!docAlerts(v).length)return false;if(!qq)return true;const c=byId("customers",v.customerId)||{};return [v.plate,plateFmt(v.plate),v.brand,v.model,v.vin,v.owner,c.name].join(" ").toLocaleLowerCase("tr-TR").includes(qq)}).sort((a,b)=>normPlate(a.plate).localeCompare(normPlate(b.plate)));
+  const dcell=v=>{if(!v)return "—";const d=daysBetween(today(),v);return `<span style="${d<0?"color:var(--bad);font-weight:600":d<=30?"color:var(--amber);font-weight:600":""}">${fdate(v)}</span>`};
+  const nAl=S.vehicles.filter(v=>docAlerts(v).length).length;
+  return head("Araç Listesi",`${S.vehicles.length} araç`,`<button class="btn pri" data-act="newVehicle"${W()}>+ Yeni araç kartı</button>`)+
+  `<div class="toolbar"><input class="search" id="q" placeholder="Plaka, şasi no, müşteri ara" value="${esc(q)}" data-focus="1"><div class="chips"><button class="chip${filter!=="uyari"?" on":""}" data-act="filter" data-id="hepsi">Tümü</button><button class="chip${filter==="uyari"?" on":""}" data-act="filter" data-id="uyari">Tarihi yaklaşanlar (${nAl})</button></div></div>`+
+  tbl([{l:"Plaka"},{l:"Araç"},{l:"Cari"},{l:"KM",n:1},{l:"Sonraki bakım"},{l:"Muayene"},{l:"Trafik sig."},{l:"Kasko"},{l:"Mesaj"}],
+   rows.map(v=>{const c=byId("customers",v.customerId)||{},d=serviceDue(v);return `<tr class="click" tabindex="0" data-act="vehicleCard" data-id="${v.id}"><td>${plateHTML(v.plate)}${v.loaner?` <span class="pill st-acik">İkame</span>`:""}</td><td>${esc(v.brand)} ${esc(v.model)} <span class="muted">${esc(v.year||"")}</span></td><td>${esc(c.name||"—")}</td><td class="n">${num(v.km)}</td><td>${d&&d.dueDate?dcell(d.dueDate):"—"}</td><td>${dcell(v.inspEnd)}</td><td>${dcell(v.trafficEnd)}</td><td>${dcell(v.kaskoEnd)}</td><td>${smsOk(v)?"İzin var":`<span class="muted">Yok</span>`}</td></tr>`}),
+   filter==="uyari"?"Tarihi yaklaşan araç yok.":"Araç kartı yok.");
+}
+function vehicleForm(v){
+  const custs=[{v:"",l:"— Cari seçin —"},...S.customers.slice().sort((a,b)=>a.name.localeCompare(b.name,"tr")).map(c=>({v:c.id,l:c.name})),{v:"__new",l:"+ Yeni cari oluştur"}];
+  const c=v&&byId("customers",v.customerId)||{};
+  const vals=v?{...v,plate:plateFmt(v.plate),phone:c.phone,email:c.email}:{smsOk:true};
+  const sel=(k,label,opts)=>({k,label,type:"select",options:["",...opts],half:1});
+  formModal({title:v?"Araç kartı · "+esc(plateFmt(v.plate)):"Yeni araç kartı",wide:1,values:vals,submit:"Kaydet",
+   fields:[{sec:"Araç bilgileri"},
+    {k:"plate",label:"Plaka",req:1,half:1,ph:"31 ABC 123"},{k:"brand",label:"Marka",half:1,ph:"Toyota"},{k:"model",label:"Model",half:1},{k:"year",label:"Model yılı",type:"number",half:1},
+    {k:"engineNo",label:"Motor no",half:1},{k:"vin",label:"Şasi no",half:1},{k:"owner",label:"Ruhsat sahibi",half:1},
+    sel("vtype","Araç tipi",["Otomobil","Arazi / SUV","Kamyonet","Pick-up","Minibüs","Panelvan","Motosiklet"]),
+    sel("body","Kasa tipi",["Sedan","Hatchback","Station wagon","Coupe","Çift kabin","Tek kabin","Van"]),
+    sel("gear","Şanzıman",["Manuel","Otomatik","Yarı otomatik","CVT"]),
+    {k:"color",label:"Renk",half:1},sel("fuel","Yakıt cinsi",["Benzin","Dizel","LPG + Benzin","Hibrit","Elektrik"]),
+    {k:"keyCode",label:"Anahtar kodu",half:1},{k:"radioCode",label:"Radyo kodu",half:1},
+    {k:"regDate",label:"Tescil tarihi",type:"date",half:1},{k:"trafficDate",label:"Trafiğe çıkış tarihi",type:"date",half:1},
+    {k:"engineCc",label:"Motor hacmi (cc)",type:"number",half:1},{k:"kw",label:"Motor gücü (kW)",type:"number",half:1},
+    {k:"weight",label:"Net ağırlık (kg)",type:"number",half:1},{k:"driver",label:"Araç şoförü",half:1},
+    {k:"km",label:"KM",type:"number",half:1},{k:"nextKm",label:"Bakıma geleceği KM",type:"number",half:1,hint:"Boşsa son bakım + 15.000 km"},
+    {sec:"Cari"},
+    {k:"customerId",label:"Cari",type:"select",options:custs},{k:"newName",label:"Yeni cari adı",half:1,hint:"Sadece “Yeni cari oluştur” seçiliyse"},
+    {k:"phone",label:"Carinin cep telefonu",type:"tel",half:1},{k:"email",label:"Carinin e-posta adresi",type:"email"},
+    {sec:"Bakım ve belgeler"},
+    {k:"lastService",label:"Son bakım tarihi",type:"date",half:1},{k:"nextService",label:"Geleceği bakım tarihi",type:"date",half:1,hint:"Boşsa son bakım + 1 yıl"},
+    {k:"warrantyEnd",label:"Garanti bitiş tarihi",type:"date",half:1},{k:"inspLast",label:"Son fenni muayene tarihi",type:"date",half:1},
+    {k:"inspEnd",label:"Fenni muayene bitiş tarihi",type:"date",half:1},{k:"exhLast",label:"Son egzoz muayene tarihi",type:"date",half:1},
+    {k:"exhEnd",label:"Egzoz muayene bitiş tarihi",type:"date",half:1},{k:"trafficStart",label:"Trafik sigortası başlama",type:"date",half:1},
+    {k:"trafficEnd",label:"Trafik sigortası bitiş",type:"date",half:1},{k:"kaskoStart",label:"Kasko başlama",type:"date",half:1},
+    {k:"kaskoEnd",label:"Kasko bitiş",type:"date",half:1},
+    {k:"loaner",label:"Bu araç ikame (müşteriye verdiğimiz) araç",type:"checkbox"},
+    {k:"smsOk",label:"Bakım için otomatik mesaj gitmesinde sakınca yoktur (müşteri izni)",type:"checkbox"},
+    {k:"note",label:"Açıklama",type:"textarea"}],
+   onInput(k,vals){
+     if(k==="customerId"){const cc=byId("customers",vals.customerId);setVal("phone",cc?cc.phone||"":"");setVal("email",cc?cc.email||"":"")}
+     if(k==="inspLast"&&vals.inspLast&&!vals.inspEnd)setVal("inspEnd",addDays(vals.inspLast,730));
+     if(k==="exhLast"&&vals.exhLast&&!vals.exhEnd)setVal("exhEnd",addDays(vals.exhLast,365));
+     if(k==="trafficStart"&&vals.trafficStart&&!vals.trafficEnd)setVal("trafficEnd",addDays(vals.trafficStart,365));
+     if(k==="kaskoStart"&&vals.kaskoStart&&!vals.kaskoEnd)setVal("kaskoEnd",addDays(vals.kaskoStart,365));
+   },
+   async onSave(f){
+     const p=normPlate(f.plate);if(!p)return "Plaka zorunlu.";
+     const other=findVehicle(p);if(other&&(!v||other.id!==v.id))return `${plateFmt(p)} plakası zaten kayıtlı.`;
+     if(f.customerId==="__new"&&!f.newName)return "Yeni cari için ad yazın.";
+     let cid=f.customerId;
+     if(cid==="__new")cid=await put("customers",{name:f.newName,phone:f.phone,email:f.email,type:"Bireysel"});
+     else if(cid){const cc=byId("customers",cid);if(cc&&(cc.phone!==f.phone||(cc.email||"")!==f.email))await put("customers",{...cc,phone:f.phone,email:f.email})}
+     const rec={...(v||{}),...f,plate:p,customerId:cid||null};delete rec.newName;delete rec.phone;delete rec.email;
+     await put("vehicles",rec);toast("Araç kartı kaydedildi");
+   }});
 }
 
 function vAppts(){
@@ -409,7 +483,8 @@ function vRemind(){
   `<div class="grid g2">`+
   sec("Aracı hazır olanlar","Durumu “Hazır” olan iş emirleri",r.ready.map(o=>{const c=byId("customers",o.customerId)||{};return `<div class="li">${plateHTML(o.plate)}<div class="grow"><b>${esc(c.name)}</b><div class="muted">${TL(totals(o).total)}</div></div><button class="btn sm pri" data-act="orderMsg" data-id="${o.id}">Mesaj</button></div>`}))+
   sec("Yarınki randevular","Randevudan bir gün önce hatırlatma",r.appts.map(a=>`<div class="li">${plateHTML(a.plate)}<div class="grow"><b>${esc(a.customerName)}</b><div class="muted">Yarın ${esc(a.time)}</div></div><button class="btn sm pri" data-act="apptMsg" data-id="${a.id}">Mesaj</button></div>`))+
-  sec("Periyodik bakımı gelenler","Son bakımdan bu yana 1 yıl ya da 15.000 km dolmak üzere",r.due.map(({v,d})=>{const c=byId("customers",v.customerId)||{};return `<div class="li">${plateHTML(v.plate)}<div class="grow"><b>${esc(c.name)}</b><div class="muted">${esc(v.brand)} ${esc(v.model)} · ${d.days<0?`<span style="color:var(--bad)">${-d.days} gün gecikti</span>`:d.days+" gün kaldı"}</div></div><button class="btn sm pri" data-act="dueMsg" data-id="${v.id}">Mesaj</button></div>`}))+
+  sec("Periyodik bakımı gelenler","Son bakımdan bu yana 1 yıl ya da 15.000 km dolmak üzere",r.due.map(({v,d})=>{const c=byId("customers",v.customerId)||{};return `<div class="li">${plateHTML(v.plate)}<div class="grow"><b>${esc(c.name)}</b><div class="muted">${esc(v.brand)} ${esc(v.model)} · ${d.days<99999?(d.days<0?`<span style="color:var(--bad)">${-d.days} gün gecikti</span>`:d.days+" gün kaldı"):num(d.kmLeft)+" km kaldı"}</div></div>${smsOk(v)?`<button class="btn sm pri" data-act="dueMsg" data-id="${v.id}">Mesaj</button>`:`<span class="pill st-teslim" title="Araç kartında mesaj izni yok">Mesaj izni yok</span>`}</div>`}))+
+  sec("Muayene, sigorta, kasko","30 gün içinde bitenler ve son 60 günde bitmiş olanlar",r.docs.map(x=>{const c=byId("customers",x.v.customerId)||{};return `<div class="li">${plateHTML(x.v.plate)}<div class="grow"><b>${esc(x.l)}</b> · ${fdate(x.date)}<div class="muted">${esc(c.name)} · ${dayTxt(x.days)}</div></div>${smsOk(x.v)?`<button class="btn sm pri" data-act="docMsg" data-id="${x.v.id}" data-k="${x.k}">Mesaj</button>`:`<span class="pill st-teslim">Mesaj izni yok</span>`}</div>`}))+
   sec("Borcu olanlar","Cari bakiyesi borçta olan müşteriler",r.debt.map(({c,b})=>`<div class="li"><div class="grow"><b>${esc(c.name)}</b><div class="muted">${esc(c.phone)}</div></div><b style="color:var(--bad)">${TL(b)}</b><button class="btn sm pri" data-act="customerMsg" data-id="${c.id}">Mesaj</button></div>`))+
   `</div>`;
 }
@@ -440,7 +515,7 @@ function vPortal(){
     body=`<div class="top">${CAR}<div style="font-family:var(--f-display);font-size:22px;font-weight:700;text-transform:uppercase">${esc(v.brand)} ${esc(v.model)}</div><div style="margin-top:6px">${plateHTML(v.plate)}</div></div>
     ${cur?`<div class="pad" style="padding-bottom:0"><div class="demo" style="margin:0;background:var(--brand-soft)"><span>Aracınız şu an serviste: ${pill(cur.status)}</span></div></div>`:""}
     <button class="row" data-act="portalHist">${'<svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5M12 7v5l3 2"/></svg>'}<span><b>Servis Geçmişini Gör</b><span class="muted">${hist[0]?"Son Servis: "+longDate(hist[0].closedAt):"Henüz servis kaydı yok"}</span></span></button>
-    ${d?`<div class="row" style="cursor:default">${'<svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>'}<span><b>Sonraki Bakım</b><span class="muted">${longDate(d.dueDate)} ya da ${num(d.dueKm)} km</span></span></div>`:""}
+    ${d?`<div class="row" style="cursor:default">${'<svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>'}<span><b>Sonraki Bakım</b><span class="muted">${[d.dueDate&&longDate(d.dueDate),d.dueKm&&num(d.dueKm)+" km"].filter(Boolean).join(" ya da ")}</span></span></div>`:""}
     <div class="row" style="cursor:default">${'<svg viewBox="0 0 24 24"><path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2"/></svg>'}<span><b>Servisi Ara</b><span class="muted" style="user-select:all">${esc(st.phone||"—")}</span></span></div>
     <div class="pad" id="histList">${portal.showHist?(hist.length?hist.map(o=>`<button class="row" style="margin:6px 0;width:100%" data-act="portalOpen" data-id="${o.id}"><span><b style="font-size:18px">${longDate(o.closedAt)}</b><span class="muted">${num(o.km)} km · ${esc(o.complaint||"Servis")} · ${TL(totals(o).total)}</span></span></button>`).join(""):`<div class="empty">Kayıt yok.</div>`):""}
     <button class="btn sm" data-act="portalOut" style="margin-top:10px">Başka araç sorgula</button></div>`;
@@ -459,6 +534,7 @@ function vSettings(){
 let MD=null;
 function closeModal(){$("#modal").innerHTML="";MD=null}
 function fieldHTML(f,v){
+  if(f.sec)return `<div class="fsec">${f.sec}</div>`;
   const id="f_"+f.k, cls="f"+(f.half?" half":"")+(f.type==="checkbox"?" chk":"");
   if(f.type==="checkbox")return `<div class="${cls}"><input type="checkbox" id="${id}"${v?" checked":""}><label for="${id}">${f.label}</label></div>`;
   let inp;
@@ -469,10 +545,10 @@ function fieldHTML(f,v){
 }
 function formModal(o){
   MD=o;const v=o.values||{};
-  $("#modal").innerHTML=`<div class="ov" data-ov="1"><form class="md" id="mform" novalidate><h3>${o.title}</h3>${o.intro||""}<div class="fg">${o.fields.map(f=>fieldHTML(f,v[f.k]??f.def??"")).join("")}</div>${o.datalists||""}<div class="err" id="merr"></div><div class="act"><button type="button" class="btn" data-act="closeModal">Vazgeç</button><button type="submit" class="btn pri">${o.submit||"Kaydet"}</button></div></form></div>`;
+  $("#modal").innerHTML=`<div class="ov" data-ov="1"><form class="md${o.wide?" wide":""}" id="mform" novalidate><h3>${o.title}</h3>${o.intro||""}<div class="fg">${o.fields.map(f=>fieldHTML(f,v[f.k]??f.def??"")).join("")}</div>${o.datalists||""}<div class="err" id="merr"></div><div class="act"><button type="button" class="btn" data-act="closeModal">Vazgeç</button><button type="submit" class="btn pri">${o.submit||"Kaydet"}</button></div></form></div>`;
   const first=$("#mform input,#mform select,#mform textarea");if(first)first.focus();
 }
-function collect(){const r={};MD.fields.forEach(f=>{const el=$("#f_"+f.k);if(!el)return;r[f.k]=f.type==="checkbox"?el.checked:f.type==="number"?(el.value===""?"":+String(el.value).replace(",",".")):el.value.trim()});return r}
+function collect(){const r={};MD.fields.forEach(f=>{if(f.sec)return;const el=$("#f_"+f.k);if(!el)return;r[f.k]=f.type==="checkbox"?el.checked:f.type==="number"?(el.value===""?"":+String(el.value).replace(",",".")):el.value.trim()});return r}
 function setVal(k,v){const el=$("#f_"+k);if(el){if(el.type==="checkbox")el.checked=!!v;else el.value=v}}
 function msgModal(title,text,phone){
   const wa=phone?`https://wa.me/${waNumber(phone)}?text=${encodeURIComponent(text)}`:null;
@@ -549,7 +625,7 @@ function closeForm(oid){
        await put("movements",{customerId:o.customerId,date:f.date,type:"alacak",amount:+f.amount,desc:`Tahsilat (${f.method}) · ${o.no}`,orderId:o.id});
        await put("cash",{date:f.date,type:"giris",amount:+f.amount,method:f.method,desc:`${c.name} · ${plateFmt(o.plate)} · ${o.no}`});
      }
-     const v=byId("vehicles",o.vehicleId);if(v&&+o.km>+(v.km||0))await put("vehicles",{...v,km:+o.km});
+     const v=byId("vehicles",o.vehicleId);if(v)await put("vehicles",{...v,km:Math.max(+v.km||0,+o.km||0),lastService:f.date,nextService:addDays(f.date,365),nextKm:(+o.km||0)+15000});
      await put("orders",{...o,status:"Teslim Edildi",closedAt:f.date,invoiceNo:f.invoiceNo});
      toast("Araç teslim edildi, fatura kesildi");
    }});
@@ -631,7 +707,11 @@ const ACT={
  apptToOrder:id=>{const a=byId("appts",id);const v=findVehicle(a.plate);
    put("appts",{...a,status:"Geldi"}).then(()=>orderForm({plate:plateFmt(a.plate),name:a.customerName,phone:a.phone,brand:v?.brand,model:v?.model,year:v?.year,km:v?.km,complaint:a.note})).catch(()=>{})},
  newCash:id=>cashForm(id),
- dueMsg:id=>{const v=byId("vehicles",id),c=byId("customers",v.customerId)||{},d=serviceDue(v);msgModal("Bakım hatırlatma",`Merhaba ${c.name}, ${plateFmt(v.plate)} plakalı ${v.brand} ${v.model} aracınızın son bakımı ${fdate(d.ls.closedAt)} tarihinde ${num(d.ls.km)} km'de yapıldı. Periyodik bakım zamanı ${d.days<0?"geçti":"yaklaşıyor"}.\nRandevu için bu mesajı yanıtlamanız yeterli.`+sign(),c.phone)},
+ docMsg:(id,b)=>{const v=byId("vehicles",id),c=byId("customers",v.customerId)||{},k=b.dataset.k,l=(DOCS.find(x=>x[0]===k)||[,""])[1],dd=daysBetween(today(),v[k]);
+   msgModal(l+" hatırlatma",`Merhaba ${c.name}, ${plateFmt(v.plate)} plakalı aracınızın ${l.toLocaleLowerCase("tr-TR")} ${dd<0?"süresi "+fdate(v[k])+" tarihinde doldu":fdate(v[k])+" tarihinde bitiyor"}.${k==="inspEnd"||k==="exhEnd"?"\nMuayene öncesi kontrol için servisimize uğrayabilirsiniz.":k==="warrantyEnd"?"\nGaranti bitmeden kontrol yaptırmanızı öneririz.":"\nYenilemeyi unutmamanızı hatırlatırız."}`+sign(),c.phone)},
+ vehicleCard:id=>vehicleForm(byId("vehicles",id)),
+ newVehicle:()=>vehicleForm(),
+ dueMsg:id=>{const v=byId("vehicles",id),c=byId("customers",v.customerId)||{},d=serviceDue(v);msgModal("Bakım hatırlatma",`Merhaba ${c.name}, ${plateFmt(v.plate)} plakalı ${v.brand} ${v.model} aracınızın ${d.lastDate?`son bakımı ${fdate(d.lastDate)} tarihinde${d.lastKm?" "+num(d.lastKm)+" km'de":""} yapıldı.`:"bakım kaydı bulunuyor."} Periyodik bakım zamanı ${d.days<0?"geçti":"yaklaşıyor"}.\nRandevu için bu mesajı yanıtlamanız yeterli.`+sign(),c.phone)},
  copyMsg:()=>{const ta=$("#msgText");const done=()=>toast("Kopyalandı");try{navigator.clipboard.writeText(ta.value).then(done,()=>{ta.select();toast("Metin seçildi, kopyalayın")})}catch(e){ta.select();toast("Metin seçildi, kopyalayın")}},
  portalHist:()=>{portal.showHist=!portal.showHist;render()},
  portalOpen:id=>{portal.oid=id;render()},
@@ -684,13 +764,13 @@ function demoData(){
    {id:"c5",name:"Zeynep Arslan",phone:"0533 902 11 45",type:"Bireysel"},
    {id:"c6",name:"Murat Öztürk",phone:"0542 318 77 90",type:"Bireysel"}];
   const vehicles=[
-   {id:"v1",plate:"31ABC123",brand:"Toyota",model:"Corolla",year:2019,km:84250,customerId:"c1"},
-   {id:"v2",plate:"31EDM44",brand:"Dacia",model:"Sandero Stepway",year:2025,km:11928,customerId:"c2"},
-   {id:"v3",plate:"31KL1907",brand:"Toyota",model:"Hilux",year:2016,km:352125,customerId:"c3"},
+   {id:"v1",plate:"31ABC123",brand:"Toyota",model:"Corolla",year:2019,km:84250,customerId:"c1",vtype:"Otomobil",body:"Sedan",gear:"Otomatik",fuel:"Benzin",color:"Beyaz",owner:"Ahmet Yılmaz",inspLast:D(-712),inspEnd:D(18),trafficStart:D(-225),trafficEnd:D(140),smsOk:true},
+   {id:"v2",plate:"31EDM44",brand:"Dacia",model:"Sandero Stepway",year:2025,km:11928,customerId:"c2",vtype:"Otomobil",body:"Hatchback",gear:"Manuel",fuel:"Benzin",color:"Gri",warrantyEnd:D(800),inspEnd:D(1050),smsOk:true},
+   {id:"v3",plate:"31KL1907",brand:"Toyota",model:"Hilux",year:2016,km:352125,customerId:"c3",vtype:"Pick-up",body:"Çift kabin",gear:"Manuel",fuel:"Dizel",owner:"Kuzey Lojistik Ltd. Şti.",driver:"Hasan Er",trafficEnd:D(9),kaskoEnd:D(9),inspEnd:D(160),smsOk:true},
    {id:"v4",plate:"31KL1908",brand:"Toyota",model:"Hilux",year:2018,km:241300,customerId:"c3"},
    {id:"v5",plate:"31MK550",brand:"Renault",model:"Clio",year:2017,km:132400,customerId:"c4"},
-   {id:"v6",plate:"31ZA2021",brand:"Toyota",model:"C-HR",year:2021,km:56780,customerId:"c5"},
-   {id:"v7",plate:"31MO777",brand:"Toyota",model:"Auris",year:2014,km:198500,customerId:"c6"}];
+   {id:"v6",plate:"31ZA2021",brand:"Toyota",model:"C-HR",year:2021,km:56780,customerId:"c5",vtype:"Arazi / SUV",gear:"CVT",fuel:"Hibrit",kaskoEnd:D(-5),warrantyEnd:D(25),smsOk:true},
+   {id:"v7",plate:"31MO777",brand:"Toyota",model:"Auris",year:2014,km:198500,customerId:"c6",fuel:"Dizel",smsOk:false}];
   const stock=[
    {id:"s1",name:"Yağ filtresi benzinli",brand:"Toyota",code:"04152-YZZA6",fits:"Toyota",buy:350,sell:700,kdv:20,unit:"Adet",in:15,out:11,min:3},
    {id:"s2",name:"Yağ filtresi dizel",brand:"Toyota",code:"04152-YZZA8",fits:"Toyota Hilux",buy:600,sell:800,kdv:20,unit:"Adet",in:10,out:9,min:2},
